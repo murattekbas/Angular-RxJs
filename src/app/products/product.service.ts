@@ -1,8 +1,8 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 
-import { combineLatest, Observable, throwError } from 'rxjs';
-import { catchError, map, tap } from 'rxjs/operators';
+import { BehaviorSubject, combineLatest, merge, Observable, Subject, throwError } from 'rxjs';
+import { catchError, map, scan, tap } from 'rxjs/operators';
 
 import { Product } from './product';
 import { Supplier } from '../suppliers/supplier';
@@ -16,29 +16,72 @@ export class ProductService {
   private productsUrl = 'api/products';
   private suppliersUrl = this.supplierService.suppliersUrl;
 
-  product$=this.http.get<Product[]>(this.productsUrl)
-  .pipe(
-    tap(data => console.log('Products: ', JSON.stringify(data))),
-    catchError(this.handleError)
-  );
+  product$ = this.http.get<Product[]>(this.productsUrl)
+    .pipe(
+      tap(data => console.log('Products: ', JSON.stringify(data))),
+      catchError(this.handleError)
+    );
 
-  productsWithCategory$=combineLatest([
+  productsWithCategory$ = combineLatest([
     this.product$,
     this.productCategoryService.productCategories$
   ]).pipe(
-    map(([products,categories])=>
-      products.map(product=>({
+    map(([products, categories]) =>
+      products.map(product => ({
         ...product,
-        price:product.price*1.5,
-        category:categories.find(c=>product.categoryId===c.id).name,
-        searchKey:[product.productName]
+        price: product.price * 1.5,
+        category: categories.find(c => product.categoryId === c.id).name,
+        searchKey: [product.productName]
       }) as Product)
     )
   )
 
+  private productSelectedSubject = new BehaviorSubject<number>(0);
+  productSelectedAction$ = this.productSelectedSubject.asObservable();
+
+  selectedProduct$ = combineLatest([
+    this.productsWithCategory$,
+    this.productSelectedAction$
+  ]).pipe(
+    map(([products, selectedProductId]) =>
+      products.find(product => product.id === selectedProductId)),
+    tap(product => console.log('selectedProduct', product)));
+
+
+  // Action Stream
+  private productInsertedSubject = new Subject<Product>();
+  productInsertedAction$ = this.productInsertedSubject.asObservable();
+
+  // Merge the streams
+  productsWithAdd$ = merge(
+    this.productsWithCategory$,
+    this.productInsertedAction$
+  )
+    .pipe(
+      scan((acc: Product[], value: Product) => [...acc, value]),
+      catchError(err => {
+        console.error(err);
+        return throwError(err);
+      })
+    );
+
+
   constructor(private http: HttpClient,
-              private supplierService: SupplierService,
-              private productCategoryService:ProductCategoryService) { }
+    private supplierService: SupplierService,
+    private productCategoryService: ProductCategoryService) { }
+
+
+
+
+  addProduct(newProduct?: Product): void {
+    newProduct = newProduct || this.fakeProduct();
+    this.productInsertedSubject.next(newProduct);
+  }
+
+  selectedProductChanged(selectedProductId: number): void {
+    this.productSelectedSubject.next(selectedProductId);
+  }
+
 
   /* getProducts(): Observable<Product[]> {
     return this.http.get<Product[]>(this.productsUrl)
